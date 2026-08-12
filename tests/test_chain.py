@@ -71,6 +71,7 @@ def test_parses_a_liquid_futures_scaled_option_into_a_row() -> None:
     assert row["forward"] == pytest.approx(29064.5)  # mid of futures bid/offer
     assert row["mid"] == pytest.approx((872.0 + 992.0) / 2.0)
     assert snapshot.skipped_unparsed_names == 0
+    assert snapshot.skipped_missing_forward == 0
     assert snapshot.skipped_illiquid == 0
 
 
@@ -142,6 +143,9 @@ def test_falls_back_to_settlement_price_for_the_forward_when_futures_has_no_live
 
 @respx.mock
 def test_option_with_no_matching_futures_label_is_skipped() -> None:
+    # Name matches the futures-scaled family regex fine, but no futures
+    # forward price is known for that underlying label -> skipped_missing_forward,
+    # not skipped_unparsed_names.
     _mock_options_and_futures(
         option_sec_rows=[["SR29000BI6", "SBRF-12.26M161216CA29000", "SBRF", "2026-12-16"]],
         option_md_rows=[["SR29000BI6", 872.0, 992.0, 850.0, 0.0, 6]],
@@ -153,7 +157,27 @@ def test_option_with_no_matching_futures_label_is_skipped() -> None:
         snapshot = client.fetch_chain("SBRF")
 
     assert snapshot.rows.empty
+    assert snapshot.skipped_unparsed_names == 0
+    assert snapshot.skipped_missing_forward == 1
+
+
+@respx.mock
+def test_unparseable_name_is_skipped_and_counted_separately_from_missing_forward() -> None:
+    # Regex requires option type C or P; "X" doesn't match at all -> this is
+    # the distinct skipped_unparsed_names failure mode.
+    _mock_options_and_futures(
+        option_sec_rows=[["SR29000BI6", "SBRF-9.26M160926XA29000", "SBRF", "2026-09-16"]],
+        option_md_rows=[["SR29000BI6", 872.0, 992.0, 850.0, 0.0, 6]],
+        futures_sec_rows=[["SRU6", "SBRF-9.26", "SBRF", "2026-09-17"]],
+        futures_md_rows=[["SRU6", 29063.0, 29066.0, 29064.0, 29064.0]],
+    )
+
+    with MoexOptionsChainClient() as client:
+        snapshot = client.fetch_chain("SBRF")
+
+    assert snapshot.rows.empty
     assert snapshot.skipped_unparsed_names == 1
+    assert snapshot.skipped_missing_forward == 0
 
 
 @respx.mock

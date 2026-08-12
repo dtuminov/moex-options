@@ -43,7 +43,7 @@ def test_round_trip_recovers_the_true_vol(
 
 def test_far_otm_short_dated_case_where_newton_alone_tends_to_struggle() -> None:
     # Vega is tiny here (far OTM, short-dated) -> plain Newton is exactly
-    # the regime that stalls or overshoots, which is what the bisection
+    # the regime that stalls or overshoots, which is what the Brent
     # fallback exists for.
     option_type, forward, strike, maturity, rate, true_vol = (
         OptionType.CALL, 100.0, 200.0, 0.05, 0.02, 0.80,

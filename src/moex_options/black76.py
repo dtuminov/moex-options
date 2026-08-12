@@ -1,16 +1,14 @@
-"""Black-76: option pricing and Greeks for options on a futures/forward
-underlying, implemented from scratch (only `scipy.stats.norm` is used, for
-the standard normal CDF/PDF — the same primitive any implementation would
-reach for, not a pricing library doing the actual work).
+"""Black-76 option pricing and Greeks for a futures/forward underlying,
+implemented from scratch. Only `scipy.stats.norm` is used, for the normal
+CDF/PDF.
 
-**Not vanilla Black-Scholes-Merton, on purpose.** FORTS options are options
-on a futures contract. Pricing those with textbook BSM — plugging the
-futures price straight in for spot, no adjustment — is a specific, common
-mistake: it discounts the strike leg by `exp(-rT)` but leaves the forward
-leg undiscounted, i.e. `F*N(d1) - K*exp(-rT)*N(d2)`. Black-76 discounts the
-*entire* payoff uniformly: `exp(-rT) * (F*N(d1) - K*N(d2))`. That's what's
-actually correct when the underlying is a forward/futures price rather than
-a spot price carrying its own cost-of-carry term.
+FORTS options are options on a futures contract, not on spot. Pricing them
+with textbook Black-Scholes-Merton (`S = F`, no further adjustment)
+discounts the strike leg by `exp(-rT)` but leaves the forward leg
+undiscounted: `F*N(d1) - K*exp(-rT)*N(d2)`. Black-76 discounts the whole
+payoff: `exp(-rT) * (F*N(d1) - K*N(d2))` — the correct model when the
+underlying is a forward/futures price with no cost-of-carry term of its
+own.
 """
 
 from __future__ import annotations

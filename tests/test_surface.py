@@ -9,14 +9,18 @@ import pytest
 
 from moex_options.black76 import OptionType, price
 from moex_options.chain import ChainSnapshot
-from moex_options.surface import build_surface, select_otm
+from moex_options.surface import ButterflyFlag, build_surface, check_butterfly_arbitrage, select_otm
 
 _TODAY = date(2026, 8, 11)
 
 
 def _snapshot(rows: list[dict[str, object]]) -> ChainSnapshot:
     return ChainSnapshot(
-        as_of=_TODAY, rows=pd.DataFrame(rows), skipped_unparsed_names=0, skipped_illiquid=0
+        as_of=_TODAY,
+        rows=pd.DataFrame(rows),
+        skipped_unparsed_names=0,
+        skipped_missing_forward=0,
+        skipped_illiquid=0,
     )
 
 
@@ -50,6 +54,7 @@ def test_recovers_implied_vol_for_a_valid_liquid_contract() -> None:
     assert row["moneyness"] == pytest.approx(strike / forward)
     assert result.skipped_expired == 0
     assert result.skipped_no_arbitrage == 0
+    assert result.flagged_arbitrage == []
 
 
 def test_expired_contract_is_skipped_and_counted() -> None:
@@ -105,6 +110,7 @@ def test_empty_chain_produces_an_empty_surface() -> None:
     assert result.surface.empty
     assert result.skipped_expired == 0
     assert result.skipped_no_arbitrage == 0
+    assert result.flagged_arbitrage == []
 
 
 def test_select_otm_keeps_puts_below_forward_and_calls_above() -> None:
@@ -142,3 +148,66 @@ def test_select_otm_on_empty_surface_returns_empty() -> None:
     result = select_otm(empty)
 
     assert result.empty
+
+
+def _butterfly_surface(prices: list[float], strikes: list[float]) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "expiry": [_TODAY] * len(strikes),
+            "option_type": [OptionType.CALL] * len(strikes),
+            "strike": strikes,
+            "mid_price": prices,
+        }
+    )
+
+
+def test_check_butterfly_arbitrage_flags_a_convexity_violation() -> None:
+    # Evenly spaced strikes; middle price is above the average of the wings
+    # -> a butterfly built from these three quotes sells for a riskless
+    # profit.
+    surface = _butterfly_surface(prices=[10.0, 9.0, 6.0], strikes=[95.0, 100.0, 105.0])
+
+    flags = check_butterfly_arbitrage(surface)
+
+    assert len(flags) == 1
+    flag = flags[0]
+    assert isinstance(flag, ButterflyFlag)
+    assert (flag.strike_low, flag.strike_mid, flag.strike_high) == (95.0, 100.0, 105.0)
+    assert flag.interpolated_bound == pytest.approx(8.0)  # (10+6)/2, evenly spaced
+    assert flag.violation == pytest.approx(1.0)
+
+
+def test_check_butterfly_arbitrage_does_not_flag_a_convex_price_curve() -> None:
+    # Monotonically decreasing, convex prices in strike -- the normal shape
+    # for a single option type's price curve; no arbitrage here.
+    surface = _butterfly_surface(prices=[10.0, 6.0, 4.0], strikes=[95.0, 100.0, 105.0])
+
+    flags = check_butterfly_arbitrage(surface)
+
+    assert flags == []
+
+
+def test_check_butterfly_arbitrage_uses_strike_weighted_interpolation_for_uneven_spacing() -> None:
+    # K2 is closer to K1 than K3, so it should be weighted more heavily
+    # toward price_low. Bound = 0.75*p1 + 0.25*p3 = 0.75*10 + 0.25*2 = 8.0.
+    surface = _butterfly_surface(prices=[10.0, 7.5, 2.0], strikes=[90.0, 95.0, 110.0])
+
+    flags = check_butterfly_arbitrage(surface)
+
+    assert flags == []  # 7.5 <= 8.0, no violation
+
+    # Bump price_mid just over the bound to confirm the weighting is what's
+    # doing the work (an even-spacing bound of (10+2)/2=6 would already
+    # flag 7.5; this confirms it's the 8.0 uneven-spacing bound in effect).
+    surface_flagged = _butterfly_surface(prices=[10.0, 8.5, 2.0], strikes=[90.0, 95.0, 110.0])
+
+    flags_after_bump = check_butterfly_arbitrage(surface_flagged)
+
+    assert len(flags_after_bump) == 1
+    assert flags_after_bump[0].interpolated_bound == pytest.approx(8.0)
+
+
+def test_check_butterfly_arbitrage_on_empty_surface_returns_empty() -> None:
+    empty = pd.DataFrame(columns=["expiry", "option_type", "strike", "mid_price"])
+
+    assert check_butterfly_arbitrage(empty) == []

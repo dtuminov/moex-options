@@ -1,11 +1,11 @@
 """Implied volatility: inverts Black-76 by numerical root-finding.
 
 Newton-Raphson (fast, using vega as the derivative) first, falling back to
-bisection (slower, but guaranteed to converge given a bracketing interval)
-when Newton stalls or steps outside a sane vol range — the standard robust-
-solver pattern. Plain Newton can diverge or oscillate for far-OTM or very
-short-dated options, where the price is nearly flat in vol (vega ~ 0) and a
-single bad step overshoots badly.
+Brent's method (`scipy.optimize.brentq` — slower, but guaranteed to converge
+given a bracketing interval) when Newton stalls or steps outside a sane vol
+range. Plain Newton diverges or oscillates for far-OTM or short-dated
+options, where price is nearly flat in vol (vega close to 0) and a single
+step overshoots.
 """
 
 from __future__ import annotations
@@ -50,10 +50,10 @@ def solve_implied_vol(
         if not (_VOL_LOWER_BOUND < vol < _VOL_UPPER_BOUND):
             break
 
-    return _solve_by_bisection(option_type, market_price, forward, strike, maturity, rate)
+    return _solve_by_brent(option_type, market_price, forward, strike, maturity, rate)
 
 
-def _solve_by_bisection(
+def _solve_by_brent(
     option_type: OptionType,
     market_price: float,
     forward: float,

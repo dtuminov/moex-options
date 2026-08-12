@@ -1,22 +1,22 @@
 """Live MOEX FORTS option chain + underlying futures snapshot.
 
-Unlike a historical time series, this fetches a *current* cross-sectional
-snapshot: the full options market's reference list and live marketdata in
-one request each, filtered to one underlying asset. A historical vol
-*surface built over years* isn't available this way — MOEX's free ISS
-access gives live bid/offer, not historical ones — so this builds today's
-full strike/maturity grid instead of a time series of one, which is the
-data that's actually there to use.
+Fetches a current cross-sectional snapshot — the full options market's
+reference list and live marketdata in one request each, filtered to one
+underlying asset — rather than a time series. MOEX's free ISS access gives
+live bid/offer only, no history, so this builds today's full strike/
+maturity grid instead.
 
-**A real naming/scale quirk, handled explicitly rather than silently.**
 MOEX runs two parallel option series per underlying stock: one struck on
-the futures price directly (`SBRF-9.26M160926CA29000` — strike ~29000,
-matches the futures price scale) and one struck on something closer to the
-per-share price (`SBERP160926CE210` — strike ~210, roughly 1/100th).
-Mixing them into one "forward vs strike" comparison without noticing would
-silently corrupt the surface. `_OPTION_NAME_RE` only matches the first,
-futures-scaled family, which is the one directly comparable to the futures
-marketdata fetched alongside it; everything else is skipped and counted.
+the futures price directly (`SBRF-9.26M160926CA29000`, strike ~29000,
+matching the futures price scale) and one struck close to the per-share
+price (`SBERP160926CE210`, strike ~210, roughly 1/100th). Mixing them into
+one forward-vs-strike comparison would corrupt the surface. `_OPTION_NAME_RE`
+matches only the futures-scaled family, the one directly comparable to the
+futures marketdata fetched alongside it.
+
+Names that don't match the regex at all, and names that match but have no
+corresponding futures forward price, are two distinct failure modes,
+counted separately: `skipped_unparsed_names` and `skipped_missing_forward`.
 """
 
 from __future__ import annotations
@@ -47,7 +47,8 @@ class ChainSnapshot:
     as_of: date
     # columns: secid, underlying_label, option_type, strike, expiry, forward, bid, offer, mid
     rows: pd.DataFrame
-    skipped_unparsed_names: int  # names not in the futures-scaled family (see module docstring)
+    skipped_unparsed_names: int  # name didn't match the futures-scaled family regex at all
+    skipped_missing_forward: int  # name matched but no futures forward price was found for it
     skipped_illiquid: int  # contracts with no live bid+offer
 
 
@@ -77,6 +78,7 @@ class MoexOptionsChainClient:
 
         rows: list[dict[str, Any]] = []
         skipped_unparsed = 0
+        skipped_missing_forward = 0
         skipped_illiquid = 0
         md_by_secid = {r["SECID"]: r for r in option_marketdata}
 
@@ -90,7 +92,7 @@ class MoexOptionsChainClient:
 
             forward = forward_by_label.get(match.group("underlying"))
             if forward is None:
-                skipped_unparsed += 1
+                skipped_missing_forward += 1
                 continue
 
             md = md_by_secid.get(sec["SECID"])
@@ -120,6 +122,7 @@ class MoexOptionsChainClient:
             as_of=date.today(),
             rows=pd.DataFrame(rows),
             skipped_unparsed_names=skipped_unparsed,
+            skipped_missing_forward=skipped_missing_forward,
             skipped_illiquid=skipped_illiquid,
         )
 
