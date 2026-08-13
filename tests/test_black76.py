@@ -94,6 +94,52 @@ def test_call_delta_is_bounded_by_the_discount_factor() -> None:
 
 
 @pytest.mark.parametrize(
+    "forward,strike,maturity,rate,vol",
+    [
+        (100.0, 100.0, 1.0, 0.05, 0.2),
+        (120.0, 100.0, 0.5, 0.03, 0.35),
+        (80.0, 100.0, 2.0, 0.10, 0.15),
+    ],
+)
+@pytest.mark.parametrize("option_type", [OptionType.CALL, OptionType.PUT])
+def test_theta_matches_a_central_finite_difference_of_price_in_maturity(
+    option_type: OptionType, forward: float, strike: float, maturity: float, rate: float, vol: float
+) -> None:
+    # theta is dPrice/dt (calendar time), i.e. -dPrice/dT (time-to-maturity)
+    # -- price loses time value as maturity shrinks.
+    h = 1e-5
+    price_plus = price(option_type, forward, strike, maturity + h, rate, vol)
+    price_minus = price(option_type, forward, strike, maturity - h, rate, vol)
+    finite_diff_theta = -(price_plus - price_minus) / (2 * h)
+
+    result = greeks(option_type, forward, strike, maturity, rate, vol)
+
+    assert result.theta == pytest.approx(finite_diff_theta, abs=1e-3)
+
+
+@pytest.mark.parametrize(
+    "forward,strike,maturity,rate,vol",
+    [
+        (100.0, 100.0, 1.0, 0.05, 0.2),
+        (120.0, 100.0, 0.5, 0.03, 0.35),
+        (80.0, 100.0, 2.0, 0.10, 0.15),
+    ],
+)
+@pytest.mark.parametrize("option_type", [OptionType.CALL, OptionType.PUT])
+def test_rho_matches_a_central_finite_difference_of_price_in_rate(
+    option_type: OptionType, forward: float, strike: float, maturity: float, rate: float, vol: float
+) -> None:
+    h = 1e-6
+    price_plus = price(option_type, forward, strike, maturity, rate + h, vol)
+    price_minus = price(option_type, forward, strike, maturity, rate - h, vol)
+    finite_diff_rho = (price_plus - price_minus) / (2 * h)
+
+    result = greeks(option_type, forward, strike, maturity, rate, vol)
+
+    assert result.rho == pytest.approx(finite_diff_rho, abs=1e-3)
+
+
+@pytest.mark.parametrize(
     "bad_kwargs",
     [
         {"forward": 0.0},

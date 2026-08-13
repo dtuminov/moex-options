@@ -102,6 +102,37 @@ def test_no_arbitrage_violating_price_is_skipped_and_counted_not_raised() -> Non
 
     assert result.surface.empty
     assert result.skipped_no_arbitrage == 1
+    assert result.skipped_unsolved == 0
+
+
+def test_unsolvable_but_arbitrage_free_price_is_counted_separately_from_no_arbitrage() -> None:
+    # A market_price of exactly 0.0 is within the no-arbitrage bounds for a
+    # deep-OTM contract (lower bound is 0 for an OTM call) -- it's not an
+    # arbitrage violation, just a quote solve_implied_vol can't recover a
+    # vol from. This must land in skipped_unsolved, not skipped_no_arbitrage
+    # -- conflating the two would repeat the exact misleading-naming problem
+    # ImpliedVolError.reason exists to avoid (see surface.py SurfaceResult).
+    snapshot = _snapshot(
+        [
+            {
+                "secid": "SR100000BI6",
+                "underlying_label": "SBRF-9.26",
+                "option_type": OptionType.CALL,
+                "strike": 100000.0,  # deep OTM: forward is 29000
+                "expiry": _TODAY + timedelta(days=1),  # short-dated
+                "forward": 29000.0,
+                "bid": 0.0,
+                "offer": 0.0,
+                "mid": 0.0,
+            }
+        ]
+    )
+
+    result = build_surface(snapshot, rate=0.15)
+
+    assert result.surface.empty
+    assert result.skipped_no_arbitrage == 0
+    assert result.skipped_unsolved == 1
 
 
 def test_empty_chain_produces_an_empty_surface() -> None:
@@ -110,6 +141,7 @@ def test_empty_chain_produces_an_empty_surface() -> None:
     assert result.surface.empty
     assert result.skipped_expired == 0
     assert result.skipped_no_arbitrage == 0
+    assert result.skipped_unsolved == 0
     assert result.flagged_arbitrage == []
 
 

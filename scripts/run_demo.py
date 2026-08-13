@@ -44,7 +44,8 @@ def main() -> None:
     print(
         f"Solved implied vol for {len(result.surface)} contracts "
         f"(skipped {result.skipped_expired} expired, "
-        f"{result.skipped_no_arbitrage} violating no-arbitrage bounds)\n"
+        f"{result.skipped_no_arbitrage} violating no-arbitrage bounds, "
+        f"{result.skipped_unsolved} otherwise unsolvable)\n"
     )
     if result.flagged_arbitrage:
         print(f"WARNING: {len(result.flagged_arbitrage)} butterfly-arbitrage flags:")

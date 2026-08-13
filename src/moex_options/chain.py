@@ -33,6 +33,9 @@ import pandas as pd
 from moex_options.black76 import OptionType
 
 _BASE_URL = "https://iss.moex.com/iss"
+# The literal "A" between the C/P type letter and the strike marks the
+# American-exercise style of this option series (MOEX FORTS options are
+# American-style) -- an unlabeled part of MOEX's own naming convention.
 _OPTION_NAME_RE = re.compile(
     r"^(?P<underlying>[A-Z]+-\d+\.\d+)M\d{6}(?P<type>[CP])A(?P<strike>\d+(?:\.\d+)?)$"
 )

@@ -18,7 +18,12 @@ from moex_options.chain import ChainSnapshot
 from moex_options.implied_vol import ImpliedVolError, solve_implied_vol
 
 _DAYS_PER_YEAR = 365.0  # ACT/365 year-fraction convention
-_BUTTERFLY_TOLERANCE = 1e-6  # absolute price tolerance, to absorb float rounding
+# Relative price tolerance (fraction of the interpolated bound), to absorb
+# float rounding without being swamped by it. An absolute 1e-6 has no
+# connection to the actual scale of MOEX premiums (hundreds to thousands of
+# rubles), so it's scaled to the bound itself, floored at 1.0 so it stays
+# sane for near-zero bounds.
+_BUTTERFLY_TOLERANCE_REL = 1e-6
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,7 +62,12 @@ class SurfaceResult:
     # all struck against the same underlying futures contract.
     surface: pd.DataFrame
     skipped_expired: int
-    skipped_no_arbitrage: int
+    skipped_no_arbitrage: int  # ImpliedVolError, reason="no_arbitrage_violation"
+    skipped_unsolved: int  # ImpliedVolError, any other reason (zero-price underflow,
+    # no solution in the solver's search range) -- a contract that simply couldn't be
+    # given an implied vol, separate from an arbitrage violation. Kept apart from
+    # skipped_no_arbitrage since lumping them together would repeat the exact
+    # misleading-naming problem `ImpliedVolError.reason` exists to avoid.
     flagged_arbitrage: list[ButterflyFlag]
 
 
@@ -69,6 +79,7 @@ def build_surface(snapshot: ChainSnapshot, rate: float) -> SurfaceResult:
     records: list[dict[str, Any]] = []
     skipped_expired = 0
     skipped_no_arbitrage = 0
+    skipped_unsolved = 0
 
     for row in snapshot.rows.to_dict("records"):
         expiry = row["expiry"]
@@ -82,8 +93,11 @@ def build_surface(snapshot: ChainSnapshot, rate: float) -> SurfaceResult:
             implied_vol = solve_implied_vol(
                 row["option_type"], float(row["mid"]), forward, strike, maturity, rate
             )
-        except ImpliedVolError:
-            skipped_no_arbitrage += 1
+        except ImpliedVolError as exc:
+            if exc.reason == "no_arbitrage_violation":
+                skipped_no_arbitrage += 1
+            else:
+                skipped_unsolved += 1
             continue
 
         records.append(
@@ -106,6 +120,7 @@ def build_surface(snapshot: ChainSnapshot, rate: float) -> SurfaceResult:
         surface=surface_df,
         skipped_expired=skipped_expired,
         skipped_no_arbitrage=skipped_no_arbitrage,
+        skipped_unsolved=skipped_unsolved,
         flagged_arbitrage=check_butterfly_arbitrage(surface_df),
     )
 
@@ -123,9 +138,9 @@ def check_butterfly_arbitrage(surface: pd.DataFrame) -> list[ButterflyFlag]:
     much as an equivalent position in K2; a violation means the three
     quoted prices imply a butterfly that can be sold for a riskless profit.
 
-    Checked per option type, not across calls and puts together: price is
+    Checked per option type, keeping calls and puts separate: price is
     convex and monotonic in strike for a single option type over its full
-    range, but an OTM put and an OTM call either side of the forward do not
+    range, but an OTM put and an OTM call either side of the forward don't
     form a convex sequence without a put-call-parity adjustment first. This
     is a v1 diagnostic on raw quoted prices — no interpolation or smile fit
     is applied beyond the three-point check itself.
@@ -148,7 +163,8 @@ def check_butterfly_arbitrage(surface: pd.DataFrame) -> list[ButterflyFlag]:
             w1 = (k3 - k2) / (k3 - k1)
             w3 = (k2 - k1) / (k3 - k1)
             bound = w1 * p1 + w3 * p3
-            if p2 > bound + _BUTTERFLY_TOLERANCE:
+            tolerance = _BUTTERFLY_TOLERANCE_REL * max(abs(bound), 1.0)
+            if p2 > bound + tolerance:
                 flags.append(
                     ButterflyFlag(
                         expiry=expiry,

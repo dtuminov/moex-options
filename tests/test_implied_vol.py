@@ -74,3 +74,92 @@ def test_price_below_lower_no_arbitrage_bound_raises() -> None:
         solve_implied_vol(
             OptionType.CALL, market_price=1.0, forward=120.0, strike=100.0, maturity=1.0, rate=0.05
         )
+
+
+def test_no_arbitrage_violation_has_a_distinct_reason_from_no_solution_in_range() -> None:
+    # Two different ImpliedVolError causes should be programmatically
+    # distinguishable via `reason`, not just by eyeballing the message: an
+    # actually-invalid quote (violates a no-arbitrage bound) vs. a valid,
+    # arbitrage-free quote for which the solver's search range just doesn't
+    # contain a matching vol.
+    with pytest.raises(ImpliedVolError) as exc_info:
+        solve_implied_vol(
+            OptionType.CALL,
+            market_price=1000.0,
+            forward=100.0,
+            strike=100.0,
+            maturity=1.0,
+            rate=0.05,
+        )
+    assert exc_info.value.reason == "no_arbitrage_violation"
+
+
+def test_non_positive_maturity_raises_implied_vol_error_not_bare_value_error() -> None:
+    # solve_implied_vol must validate maturity itself and raise its own
+    # ImpliedVolError, rather than letting a bare ValueError bubble up from
+    # black76._d1_d2 deep in the call stack -- callers of this module should
+    # get one consistent exception type regardless of which invalid input
+    # triggered it.
+    with pytest.raises(ImpliedVolError) as exc_info:
+        solve_implied_vol(
+            OptionType.CALL, market_price=10.0, forward=100.0, strike=100.0, maturity=0.0, rate=0.05
+        )
+    assert exc_info.value.reason == "invalid_maturity"
+
+    with pytest.raises(ImpliedVolError):
+        solve_implied_vol(
+            OptionType.CALL,
+            market_price=10.0,
+            forward=100.0,
+            strike=100.0,
+            maturity=-1.0,
+            rate=0.05,
+        )
+
+
+@pytest.mark.parametrize("initial_guess", [0.05, 0.3, 0.9, 2.0])
+def test_deep_otm_short_dated_zero_price_never_returns_the_unmodified_initial_guess(
+    initial_guess: float,
+) -> None:
+    # Regression test for the false-convergence bug: F=100, K=1000, T=0.01
+    # is a far-OTM, short-dated call whose Black-76 price underflows to
+    # exactly 0.0 in float64. The old code's very first convergence check
+    # (`abs(diff) < tol`) trivially passed against a market_price of 0.0
+    # before a single real Newton step was taken -- for every one of these
+    # four initial guesses, "recovering" the unmodified initial guess as if
+    # it were a real solved vol, with no error and no signal anything was
+    # wrong. The fix must never do that: it should raise a clear error
+    # instead (since a 0.0 quote carries no vol information at all).
+    with pytest.raises(ImpliedVolError) as exc_info:
+        solve_implied_vol(
+            OptionType.CALL,
+            market_price=0.0,
+            forward=100.0,
+            strike=1000.0,
+            maturity=0.01,
+            rate=0.0,
+            initial_guess=initial_guess,
+        )
+    assert exc_info.value.reason == "zero_price"
+
+
+@pytest.mark.parametrize("initial_guess", [0.05, 0.3, 0.9, 2.0])
+def test_near_zero_but_nonzero_price_still_does_not_return_the_unmodified_initial_guess(
+    initial_guess: float,
+) -> None:
+    # Same regime as the zero-price regression above, but with a tiny
+    # nonzero market_price that bypasses the explicit zero_price check --
+    # this exercises the vega-gated convergence check instead (fix #2:
+    # `diff` alone is not trusted as "converged" unless vega confirms the
+    # solver is in a regime where a step is meaningful). Should still never
+    # trivially return the untouched initial guess.
+    recovered_vol = solve_implied_vol(
+        OptionType.CALL,
+        market_price=1e-150,
+        forward=100.0,
+        strike=1000.0,
+        maturity=0.01,
+        rate=0.0,
+        initial_guess=initial_guess,
+    )
+    assert recovered_vol != initial_guess

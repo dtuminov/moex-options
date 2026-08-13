@@ -2,13 +2,13 @@
 implemented from scratch. Only `scipy.stats.norm` is used, for the normal
 CDF/PDF.
 
-FORTS options are options on a futures contract, not on spot. Pricing them
-with textbook Black-Scholes-Merton (`S = F`, no further adjustment)
-discounts the strike leg by `exp(-rT)` but leaves the forward leg
-undiscounted: `F*N(d1) - K*exp(-rT)*N(d2)`. Black-76 discounts the whole
-payoff: `exp(-rT) * (F*N(d1) - K*N(d2))` — the correct model when the
-underlying is a forward/futures price with no cost-of-carry term of its
-own.
+FORTS options are struck against a futures contract, so the underlying is a
+futures/forward price rather than spot. Plugging that price into textbook
+Black-Scholes-Merton (`S = F`, no further adjustment) discounts the strike
+leg by `exp(-rT)` while leaving the forward leg undiscounted:
+`F*N(d1) - K*exp(-rT)*N(d2)`. Black-76 discounts the whole payoff:
+`exp(-rT) * (F*N(d1) - K*N(d2))` — the correct model when the underlying is
+a forward/futures price with no cost-of-carry term of its own.
 """
 
 from __future__ import annotations
